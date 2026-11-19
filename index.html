@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: https://images.openfoodfacts.org https://static.openfoodfacts.org https://world.openfoodfacts.org; connect-src 'self' https://world.openfoodfacts.org; media-src 'self' blob: mediastream:; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; upgrade-insecure-requests">
+<meta name="referrer" content="no-referrer">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f766e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="CartWise">
+<meta name="description" content="Scan groceries, compare unit prices, track bulk deals, nutrition and your pantry.">
+<title>CartWise: Bulk Deal Scanner</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="css/app.css">
+<script src="vendor/html5-qrcode.min.js" defer></script>
+<script type="module" src="js/app.js"></script>
+</head>
+<body>
+<div id="offline" class="offline hide">Offline: scans are saved and will be looked up when you're back online</div>
+<header><h1>🛒 CartWise</h1><span class="pill" id="hdrCount"></span></header>
+
+<main>
+<!-- SCAN -->
+<section id="v-scan">
+  <div id="tripBar"></div>
+  <div class="card">
+    <div id="reader"></div>
+    <div class="row" style="margin-top:10px"><button id="btnCam">📷 Start camera</button></div>
+    <label>Or type a barcode</label>
+    <form id="manual" class="row"><input id="manualCode" inputmode="numeric" placeholder="e.g. 096619756803" autocomplete="off"><button class="none" style="white-space:nowrap">Look up</button></form>
+  </div>
+  <div id="result"></div>
+</section>
+
+<!-- LIST -->
+<section id="v-list" class="hide">
+  <div class="card">
+    <h3>Shopping plan</h3>
+    <div class="mute">Grouped by the store where you've logged the lowest price. Tap an item for details.</div>
+    <div id="listItems"></div>
+    <div class="total"><span>Still to buy</span><span id="listTotal">$0.00</span></div>
+    <div class="row" style="margin-top:12px">
+      <button class="ghost sm" data-act="copyList">Copy list</button>
+      <button class="ghost sm" data-act="clearList">Clear list</button>
+    </div>
+  </div>
+  <div class="card hide" id="checkout"></div>
+  <div class="card hide" id="oneStop"></div>
+</section>
+
+<!-- PANTRY -->
+<section id="v-pantry" class="hide">
+  <div id="pantryBody"></div>
+</section>
+
+<!-- DEALS -->
+<section id="v-deals" class="hide">
+  <div class="card" id="spendCard"></div>
+  <div class="card">
+    <h3>🔥 Stock-up alerts</h3>
+    <div class="mute">Items at or below your stock-up price, well below what you usually pay, or on sale (logged in the last 14 days).</div>
+    <div id="alerts"></div>
+  </div>
+  <div class="card">
+    <h3>⚖️ Compare by unit price</h3>
+    <div class="mute">Every size and store in a group, ranked by cost per oz or per item. 🥗 marks the healthiest option.</div>
+    <select id="grpSel" style="margin-top:10px"></select>
+    <div id="grpTable"></div>
+  </div>
+  <div class="card">
+    <h3>🧾 Recent prices</h3>
+    <input id="logSearch" placeholder="Search…" style="margin-top:6px">
+    <div id="recent"></div>
+  </div>
+</section>
+
+<!-- MORE -->
+<section id="v-more" class="hide">
+  <div class="card">
+    <h3>Stores</h3>
+    <form id="storeForm" class="row"><input id="storeName" placeholder="Add a store"><button class="none">Add</button></form>
+    <div id="storeList" style="margin-top:8px"></div>
+  </div>
+  <div class="card">
+    <h3>All items</h3>
+    <input id="bookSearch" placeholder="Search name, brand or group…">
+    <div id="bookItems"></div>
+  </div>
+  <div class="card">
+    <h3>Settings</h3>
+    <label>Warn me when an item has this many days or fewer left</label>
+    <input id="setLowDays" type="number" min="1" inputmode="numeric">
+  </div>
+  <div class="card">
+    <h3>Data</h3>
+    <div class="mute">Everything is saved on this phone only. Back it up now and then.</div>
+    <div class="row" style="margin-top:10px">
+      <button class="ghost sm" data-act="csv">Prices CSV</button>
+      <button class="ghost sm" data-act="csvBuys">Purchases CSV</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button class="ghost sm" data-act="backup">Backup</button>
+      <label class="sm" style="margin:0;text-align:center;border:1px solid var(--line);border-radius:10px;padding:6px;color:var(--acc);font-weight:600;font-size:14px">Restore<input type="file" id="fileRestore" accept=".json,application/json" class="hide"></label>
+    </div>
+    <button class="ghost sm wide" data-act="wipe" style="margin-top:8px;color:var(--bad)">Erase all data</button>
+  </div>
+  <div class="card mute">
+    <strong>Ratings:</strong> Nutri-Score runs from A (best) to E. NOVA runs from 1 (unprocessed) to 4 (ultra-processed). The Fat, Sat fat, Sugar and Salt chips use the UK traffic-light levels per 100 g (per 100 ml for drinks). Product data comes from <a href="https://world.openfoodfacts.org" target="_blank" rel="noopener noreferrer">Open Food Facts</a>.
+    <div style="margin-top:6px" id="version"></div>
+  </div>
+</section>
+</main>
+
+<nav>
+  <button data-v="scan" class="on"><span>📷</span>Scan</button>
+  <button data-v="list"><span>📝</span>List<i class="dot hide" id="dotList"></i></button>
+  <button data-v="pantry"><span>🏠</span>Pantry<i class="dot hide" id="dotPantry"></i></button>
+  <button data-v="deals"><span>🔥</span>Deals<i class="dot hide" id="dotDeals"></i></button>
+  <button data-v="more"><span>⚙️</span>More</button>
+</nav>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

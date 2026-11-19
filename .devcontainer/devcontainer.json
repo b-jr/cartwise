@@ -1,0 +1,12 @@
+{
+  "name": "CartWise",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
+  "forwardPorts": [8080],
+  "portsAttributes": { "8080": { "label": "CartWise preview", "onAutoForward": "openPreview" } },
+  "postAttachCommand": "npm test --silent && npm run serve",
+  "customizations": {
+    "vscode": {
+      "extensions": ["dbaeumer.vscode-eslint", "github.vscode-github-actions", "editorconfig.editorconfig"]
+    }
+  }
+}

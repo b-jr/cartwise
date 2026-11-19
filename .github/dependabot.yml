@@ -1,0 +1,11 @@
+# Opens a pull request when a pinned GitHub Action has a new release.
+# The app itself has zero npm dependencies; the scanner library is vendored and checksum-verified.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']
