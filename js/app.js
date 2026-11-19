@@ -1,7 +1,7 @@
 import * as C from './core.js';
 const { money, r1, fmtSize, fmtUnit, unitLabel, packPrice, fmtDays, todayISO } = C;
 
-const VERSION = '3.1.0';
+const VERSION = '3.1.1';
 const MAX_BACKUP_BYTES = 10 * 1024 * 1024;
 const KEY = 'grocery-scanner-v2', OLDKEY = 'grocery-scanner-v1';
 
@@ -117,7 +117,7 @@ $('#manual').onsubmit = e => {
 };
 
 // ================= lookup (Open Food Facts) =================
-const FIELDS = 'code,product_name,brands,quantity,product_quantity,image_front_small_url,image_front_url,nutriscore_grade,nova_group,nutriments,ingredients_text,allergens_tags,serving_size,serving_quantity,categories';
+const FIELDS = 'code,product_name,brands,quantity,product_quantity,image_front_small_url,image_front_url,nutriscore_grade,nova_group,nutriments,ingredients_text,allergens_tags,serving_size,serving_quantity,categories,product_quantity_unit';
 const variants = code => [...new Set([code, ...(code.length === 12 ? ['0' + code] : []), ...(code.length === 13 && code[0] === '0' ? [code.slice(1)] : [])])];
 async function fetchOFF(code) {
   let netErr = false;
@@ -147,7 +147,7 @@ function applyOFF(code, p) {
     ingr: p.ingredients_text || '', allergens: (p.allergens_tags || []).map(a => a.replace(/^\w\w:/, '')).join(', '),
     pending: false, notFound: false,
   });
-  if (!P.size) P.size = C.parseSize(p.quantity) || (parseFloat(p.product_quantity) ? { amt: parseFloat(p.product_quantity), unit: 'g' } : null);
+  if (!P.size) P.size = C.parseSize(p.quantity) || (parseFloat(p.product_quantity) ? { amt: parseFloat(p.product_quantity), unit: /^ml$/i.test(p.product_quantity_unit || '') ? 'ml' : 'g' } : null);
   if (!P.group && cats.length) P.group = cats[cats.length - 1].replace(/^\w\w:/, '');
   return P;
 }
@@ -161,13 +161,16 @@ async function lookup(code, { quick = false } = {}) {
   // Skip the network if we already have good data from the last 30 days.
   if (known && !known.pending && known.fetched && C.daysBetween(known.fetched, today()) < 30) return;
   const res = await fetchOFF(code);
-  if (res.product) { applyOFF(code, res.product).fetched = today(); save(); return rerender(); }
+  if (res.product) { applyOFF(code, res.product).fetched = today(); S.pending = S.pending.filter(c => c !== code); save(); return rerender(); }
   if (res.netErr && !(known && !known.pending)) {
     S.products[code] = Object.assign(known || {}, { code, name: known?.name || `Barcode ${code}`, pending: true });
     if (!S.pending.includes(code)) S.pending.push(code);
     save(); toast('Offline: saved it, and it will be looked up later'); return rerender();
   }
-  if (res.notFound && !known) { if (curCode === code) renderUnknown(code); return; }
+  if (res.notFound && (!known || known.pending)) {
+    if (known) { known.pending = false; known.notFound = true; S.pending = S.pending.filter(c => c !== code); save(); }
+    if (curCode === code) renderUnknown(code); return;
+  }
   rerender();
 }
 let processing = false;
@@ -210,10 +213,10 @@ function valueLine(p, price) {
 function bulkHTML(p) {
   const b = C.bulkCheck(S, ix(), p);
   if (!b) return `<div class="mute">Enter how many packs you use per month to check whether buying in bulk makes sense and to track your pantry.</div>`;
-  const L = [`<div>${b.qty} pack${b.qty > 1 ? 's' : ''} will last about <b>${fmtDays(b.lastsDays)}</b> at ${p.use}/month.</div>`];
+  const L = [`<div>${esc(b.qty)} pack${b.qty > 1 ? 's' : ''} will last about <b>${fmtDays(b.lastsDays)}</b> at ${esc(p.use)}/month.</div>`];
   if (b.shelf) L.push(b.wastePct
-    ? `<div class="warn">⚠️ Shelf life is ${b.shelf} days, so you'd likely waste about ${Math.round(b.wastePct * 100)}%. Buy ${b.maxSafe} or fewer, or freeze or split it.</div>`
-    : `<div class="ok">✅ You'll use it up before it expires (${b.shelf}-day shelf life).</div>`);
+    ? `<div class="warn">⚠️ Shelf life is ${esc(b.shelf)} days, so you'd likely waste about ${Math.round(b.wastePct * 100)}%. Buy ${b.maxSafe} or fewer, or freeze or split it.</div>`
+    : `<div class="ok">✅ You'll use it up before it expires (${esc(b.shelf)}-day shelf life).</div>`);
   if (b.upfront != null) L.push(`<div>Upfront cost <b>${money(b.upfront)}</b> · about <b>${money(b.monthly)}</b>/month</div>`);
   const u = p.size && p.size.unit;
   if (b.savesVsWorst) { const o = b.savesVsWorst.opt; L.push(`<div class="ok">💰 Saves about <b>${money(b.savesVsWorst.amt)}/month</b> (${money(b.savesVsWorst.amt * 12)}/year) compared with ${esc(o.p.name)} ${esc(fmtSize(o.p.size))} at ${esc(o.e.store)}.</div>`); }
@@ -258,14 +261,14 @@ function renderProduct(code) {
         <div class="mute">${p.group ? `Group: ${esc(p.group)} · ` : ''}#${esc(code)}</div>
       </div>
     </div>
-    <div class="chips">${p.pending ? '<span class="chip mid">⏳ Will look up when online</span>' : ''}${healthChips(p)}${inList ? `<span class="chip">On list ×${inList.qty}${inList.done ? ' · in cart' : ''}</span>` : ''}</div>
+    <div class="chips">${p.pending ? '<span class="chip mid">⏳ Will look up when online</span>' : ''}${healthChips(p)}${inList ? `<span class="chip">On list ×${esc(inList.qty)}${inList.done ? ' · in cart' : ''}</span>` : ''}</div>
     ${p.allergens ? `<div class="mute" style="margin-top:6px"><b class="warn">Allergens:</b> ${esc(p.allergens)}</div>` : ''}
 
     <div class="deal">
       ${st ? `
         <div class="row" style="align-items:flex-end">
           <div><div class="mute">Best price you've logged</div><div class="big">${money(packPrice(st.best))}</div>
-            <div class="mute">${esc(st.best.store)} · ${fmtDate(st.best.date)}${st.best.packs > 1 ? ` · ${st.best.packs} for ${money(st.best.price)}` : ''}</div></div>
+            <div class="mute">${esc(st.best.store)} · ${fmtDate(st.best.date)}${st.best.packs > 1 ? ` · ${esc(st.best.packs)} for ${money(st.best.price)}` : ''}</div></div>
           <div style="text-align:right">${u ? `<div class="unit">${fmtUnit(entryUnit(st.best), u)}</div>` : '<div class="mute">Set a size to see the unit price</div>'}</div>
         </div>
         <div class="chips">
@@ -317,7 +320,7 @@ function renderProduct(code) {
     <details id="d-nutr"><summary>🥗 Nutrition facts</summary>${nutrTable(p)}</details>
     ${p.ingr ? `<details id="d-ingr"><summary>Ingredients</summary><div class="mute">${esc(p.ingr)}</div></details>` : ''}
     ${st ? `<details id="d-hist"><summary>🧾 Price history (${st.es.length})</summary><table>
-      ${st.es.slice().reverse().map(e => `<tr><td>${fmtDate(e.date)}</td><td>${esc(e.store)}${e.sale ? ' 🏷️' : ''}</td><td class="r">${money(packPrice(e))}${e.packs > 1 ? `<div class="mute">${e.packs} for ${money(e.price)}</div>` : ''}</td><td class="r"><button class="x" data-act="delPrice" data-id="${e.id}" aria-label="Delete">✕</button></td></tr>`).join('')}
+      ${st.es.slice().reverse().map(e => `<tr><td>${fmtDate(e.date)}</td><td>${esc(e.store)}${e.sale ? ' 🏷️' : ''}</td><td class="r">${money(packPrice(e))}${e.packs > 1 ? `<div class="mute">${esc(e.packs)} for ${money(e.price)}</div>` : ''}</td><td class="r"><button class="x" data-act="delPrice" data-id="${esc(e.id)}" aria-label="Delete">✕</button></td></tr>`).join('')}
     </table></details>` : ''}
     <details id="d-edit"><summary>✏️ Edit name / remove</summary>
       <label>Name</label><input data-chg="set" id="sName" value="${esc(p.name)}">
@@ -345,7 +348,7 @@ function renderQuick(code) {
       </div>
     </div>
     <div class="chips">
-      ${it ? `<span class="chip good">✓ On your list ×${it.qty}</span>` : '<span class="chip">Not on your list</span>'}
+      ${it ? `<span class="chip good">✓ On your list ×${esc(it.qty)}</span>` : '<span class="chip">Not on your list</span>'}
       ${stock ? '<span class="chip good">🔥 Stock-up price</span>' : ''}
       ${v ? `<span class="chip ${v.cls}">${v.t}</span>` : ''}
       ${tp && !tp.here ? `<span class="chip">Best: ${money(packPrice(st.best))} at ${esc(st.best.store)}</span>` : ''}
@@ -354,7 +357,7 @@ function renderQuick(code) {
     <label>Price here at ${esc(store)}${tp && tp.here ? ` (last ${money(tp.price)})` : ''}</label>
     <div class="row">
       <input id="qPrice" class="price-in" type="number" step="0.01" inputmode="decimal" placeholder="$0.00" value="${tp && tp.here ? tp.price.toFixed(2) : ''}">
-      <div class="none" style="width:96px"><input id="qQty" type="number" min="1" inputmode="numeric" value="${it ? it.qty : 1}" aria-label="Quantity"><div class="mute" style="text-align:center;font-size:12px">qty</div></div>
+      <div class="none" style="width:96px"><input id="qQty" type="number" min="1" inputmode="numeric" value="${esc(it ? it.qty : 1)}" aria-label="Quantity"><div class="mute" style="text-align:center;font-size:12px">qty</div></div>
     </div>
     <div class="row" style="margin-top:8px"><label class="inline"><input type="checkbox" id="qSale"> On sale</label><span class="mute" id="qUnit" style="text-align:right">${tp && tp.here && u ? fmtUnit(tp.price / p.size.amt, u) : ''}</span></div>
     <button class="wide" data-act="qCart" style="margin-top:10px">✓ Put in cart</button>
@@ -408,7 +411,7 @@ function listRow(it, st) {
       <div class="mute">${e ? `${money(packPrice(e))} ea${p.size ? ' · ' + fmtUnit(entryUnit(e), p.size.unit) : ''}${e.sale ? ' · 🏷️' : ''}` : 'no price yet'}${p.size ? ' · ' + esc(fmtSize(p.size)) : ''}</div>
       ${alt ? `<div class="hint">💡 ${esc(alt.alt.p.name)} at ${esc(alt.alt.e.store)} costs ${Math.round((1 - alt.alt.u / alt.mine) * 100)}% less per ${unitLabel(p.size.unit)}</div>` : ''}
     </div>
-    <div class="qty"><button class="ghost sm" data-act="dec" data-code="${esc(it.code)}" aria-label="Less">−</button><span>${it.qty}</span><button class="ghost sm" data-act="inc" data-code="${esc(it.code)}" aria-label="More">+</button></div>
+    <div class="qty"><button class="ghost sm" data-act="dec" data-code="${esc(it.code)}" aria-label="Less">−</button><span>${esc(it.qty)}</span><button class="ghost sm" data-act="inc" data-code="${esc(it.code)}" aria-label="More">+</button></div>
   </div>`;
 }
 function renderList() {
@@ -514,7 +517,7 @@ function renderGroup(g) {
     const healthiest = rated.length > 1 ? Math.min(...rated.map(o => C.healthScore(o.p))) : null;
     html += `<table><tr><th>Item · store</th><th class="r">Pack</th><th class="r">Per ${unitLabel(u)}</th></tr>
       ${opts.map((o, i) => `<tr data-act="open" data-code="${esc(o.p.code)}">
-        <td>${i === 0 ? '🏆 ' : ''}${healthiest != null && C.healthScore(o.p) === healthiest ? '🥗 ' : ''}<b>${esc(o.p.name)}</b> ${esc(fmtSize(o.p.size))}<div class="mute">${esc(o.e.store)} · ${fmtDate(o.e.date)}${o.e.sale ? ' · 🏷️' : ''}</div>
+        <td>${i === 0 ? '🏆 ' : ''}${healthiest != null && C.hasHealthData(o.p) && C.healthScore(o.p) === healthiest ? '🥗 ' : ''}<b>${esc(o.p.name)}</b> ${esc(fmtSize(o.p.size))}<div class="mute">${esc(o.e.store)} · ${fmtDate(o.e.date)}${o.e.sale ? ' · 🏷️' : ''}</div>
           <div class="chips">${o.p.ns && 'abcde'.includes(o.p.ns) ? `<span class="chip ns-${o.p.ns}">${o.p.ns.toUpperCase()}</span>` : ''}${o.p.nova == 4 ? '<span class="chip bad">Ultra-processed</span>' : ''}</div></td>
         <td class="r">${money(packPrice(o.e))}</td>
         <td class="r"><b>${fmtUnit(o.u, u)}</b>${i ? `<div class="mute">+${Math.round((o.u / min - 1) * 100)}%</div>` : ''}</td></tr>`).join('')}</table>`;
@@ -531,7 +534,7 @@ function renderRecent() {
   $('#recent').innerHTML = es.length ? `<table>${es.map(e => { const p = S.products[e.code] || { name: e.code };
     return `<tr><td data-act="open" data-code="${esc(e.code)}"><b>${esc(p.name)}</b><div class="mute">${esc(e.store)} · ${fmtDate(e.date)}${e.sale ? ' · 🏷️' : ''}</div></td>
       <td class="r">${money(packPrice(e))}${p.size ? `<div class="mute">${fmtUnit(entryUnit(e), p.size.unit)}</div>` : ''}</td>
-      <td class="r"><button class="x" data-act="delPrice" data-id="${e.id}" aria-label="Delete">✕</button></td></tr>`; }).join('')}</table>`
+      <td class="r"><button class="x" data-act="delPrice" data-id="${esc(e.id)}" aria-label="Delete">✕</button></td></tr>`; }).join('')}</table>`
     : '<div class="mute" style="padding:10px 0">No prices logged yet.</div>';
 }
 $('#logSearch').oninput = renderRecent;
@@ -685,7 +688,7 @@ document.addEventListener('change', e => {
     const amt = num('#sAmt'), [unit, f] = C.EDIT_UNITS[$('#sUnit').value];
     // Changing usage rate must not rewrite how much was already consumed, so materialize the pantry first.
     if (S.pantry[curCode]) { const ent = C.pantryAdjust(p, S.pantry[curCode], 0, today()); if (ent) S.pantry[curCode] = ent; else delete S.pantry[curCode]; }
-    p.size = amt ? { amt: amt * f, unit } : null;
+    if (el.id === 'sAmt' || el.id === 'sUnit') p.size = amt ? { amt: amt * f, unit } : null;
     p.group = $('#sGroup').value.trim() || null;
     p.target = num('#sTarget'); p.use = num('#sUse'); p.shelf = num('#sShelf'); p.buy = Math.max(1, Math.round(num('#sBuy') || 1));
     const nm = $('#sName').value.trim(); if (nm && nm !== p.name) { p.name = nm; p.renamed = true; }

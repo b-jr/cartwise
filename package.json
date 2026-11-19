@@ -1,6 +1,6 @@
 {
   "name": "cartwise",
-  "version": "3.1.0",
+  "version": "3.1.1",
   "private": true,
   "type": "module",
   "description": "Barcode scanner PWA for bulk grocery deals, nutrition ratings and pantry tracking",

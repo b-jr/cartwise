@@ -189,3 +189,51 @@ test('isDuplicate prevents double-logging the same price on the same day', () =>
   assert.ok(C.isDuplicate(S, { code: 'big', store: 'Walmart', price: 7.99, packs: 1, date: '2026-11-11' }));
   assert.ok(!C.isDuplicate(S, { code: 'big', store: 'Walmart', price: 7.49, packs: 1, date: '2026-11-11' }));
 });
+
+// ---------- regression tests for issues #1-#8 ----------
+test('#1 migrate coerces restored values so markup cannot reach the page', () => {
+  const S = C.migrate({ v: 3, stores: ['X', 7], settings: { lowDays: '<b>' },
+    products: { '123456': { name: 5, use: '<img>', shelf: '30', buy: 'x', size: { amt: '<i>', unit: 'g' } }, bad: 'nope' },
+    prices: [{ id: '"><img src=x>', code: '123456', store: 'X', price: '2.5', packs: '<b>2</b>', date: '2026-11-01' }, { id: 'z', code: '1', price: 'free' }],
+    list: [{ code: '123456', qty: '<i>x</i>', done: 1 }],
+    purchases: [{ code: '123456', qty: '3', packPrice: '1.5', saved: 'lots', date: '2026-11-01' }],
+    pantry: { '123456': { asOf: '2026-11-01', lots: [{ qty: '2', date: '2026-11-01' }, { qty: '<b>' }] }, junk: 5 } });
+  const p = S.products['123456'];
+  assert.equal(p.code, '123456'); assert.equal(p.name, '5'); assert.equal(p.use, null); assert.equal(p.shelf, 30); assert.equal(p.buy, 1); assert.equal(p.size, null);
+  assert.ok(!S.products.bad);
+  assert.equal(S.prices.length, 1);
+  assert.equal(S.prices[0].price, 2.5); assert.equal(S.prices[0].packs, 1); assert.equal(typeof S.prices[0].id, 'string');
+  assert.deepEqual(S.list[0], { code: '123456', qty: 1, done: true });
+  assert.equal(S.purchases[0].qty, 3); assert.equal(S.purchases[0].packPrice, 1.5); assert.equal(S.purchases[0].saved, 0);
+  assert.deepEqual(S.pantry, { '123456': { asOf: '2026-11-01', lots: [{ qty: 2, date: '2026-11-01' }] } });
+  assert.deepEqual(S.stores, ['X', '7']); assert.equal(S.settings.lowDays, 7);
+});
+
+test('#1 migrate keeps valid data unchanged', () => {
+  const S = fixture(); S.list = [{ code: 'big', qty: 2, done: false }];
+  const R = C.migrate(JSON.parse(JSON.stringify(S)));
+  assert.deepEqual(R.products, S.products); assert.deepEqual(R.list, S.list);
+  assert.deepEqual(R.prices.map(e => [e.id, e.price, e.packs]), S.prices.map(e => [e.id, e.price, e.packs]));
+});
+
+test('#2 cheaperAlt gives no hint for an item without a price', () => {
+  const S = fixture(); S.products.tub = { code: 'tub', name: 'Tub', size: { amt: 900, unit: 'g' }, group: 'Yogurt' };
+  assert.equal(C.cheaperAlt(S, C.buildIndex(S), S.products.tub), null);
+});
+
+test('#3 parseSize reads thousands separators', () => {
+  near(C.parseSize('1,000 g').amt, 1000);
+  near(C.parseSize('2,000 ml').amt, 2000);
+  near(C.parseSize('1,5 kg').amt, 1500);
+  near(C.parseSize('0,75 l').amt, 750);
+});
+
+test('#8 planList does not claim $0.00 savings from splitting', () => {
+  const S = C.emptyState(); S.stores = ['X', 'Y'];
+  S.products = { a: { code: 'a', name: 'A' }, b: { code: 'b', name: 'B' } };
+  S.prices = [
+    { id: '1', code: 'a', store: 'X', price: 2, packs: 1, date: '2026-11-01' }, { id: '2', code: 'a', store: 'Y', price: 2, packs: 1, date: '2026-11-01' },
+    { id: '3', code: 'b', store: 'Y', price: 1, packs: 1, date: '2026-11-01' }, { id: '4', code: 'b', store: 'X', price: 1, packs: 1, date: '2026-11-01' }];
+  S.list = [{ code: 'a', qty: 1, done: false }, { code: 'b', qty: 1, done: false }];
+  assert.equal(C.planList(S, C.buildIndex(S)).splitSaves, null);
+});

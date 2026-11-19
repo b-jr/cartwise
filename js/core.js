@@ -39,7 +39,8 @@ export const UNITS = [
 ];
 export function parseSize(txt) {
   if (!txt) return null;
-  const t = String(txt).toLowerCase().replace(/(\d),(\d)/g, '$1.$2');
+  // "1,000 g" is a thousands separator; "1,5 l" is a decimal comma.
+  const t = String(txt).toLowerCase().replace(/(\d),(\d{3})(?!\d)/g, '$1$2').replace(/(\d),(\d)/g, '$1.$2');
   const re = /(?:(\d+)\s*[x×]\s*)?(\d+(?:\.\d+)?)\s*(fl\.?\s?oz|fluid ounces?|[a-z]+)/g;
   let m;
   while ((m = re.exec(t))) {
@@ -78,18 +79,48 @@ export function emptyState() {
     settings: { lowDays: 7 },
   };
 }
+const isObj = o => !!o && typeof o === 'object' && !Array.isArray(o);
+const pos = (v, d = null) => { const n = Number(v); return isFinite(n) && n > 0 ? n : d; };
+const whole = v => Math.max(1, Math.round(pos(v, 1)));
+const str = (v, d = '') => v == null ? d : String(v);
+// Coerce stored data to the types the UI expects. Saved data and restored backups both pass through here,
+// so a crafted backup can't slip markup into fields that are shown as numbers.
+export function sanitize(S) {
+  if (!isObj(S.products)) S.products = {};
+  for (const [code, p] of Object.entries(S.products)) {
+    if (!isObj(p)) { delete S.products[code]; continue; }
+    p.code = code; p.name = str(p.name, code);
+    for (const k of ['target', 'use', 'shelf', 'servQty']) if (p[k] != null) p[k] = pos(p[k]);
+    if (p.buy != null) p.buy = whole(p.buy);
+    if (p.size != null) p.size = isObj(p.size) && pos(p.size.amt) && ['g', 'ml', 'ct'].includes(p.size.unit) ? { amt: pos(p.size.amt), unit: p.size.unit } : null;
+  }
+  S.prices = S.prices.filter(e => isObj(e) && pos(e.price) != null).map(e => ({ ...e,
+    id: str(e.id, uid()), code: str(e.code), store: str(e.store, 'Unknown'), price: pos(e.price), packs: whole(e.packs), sale: !!e.sale, date: str(e.date) }));
+  S.list = S.list.filter(isObj).map(i => ({ ...i, code: str(i.code), qty: whole(i.qty), done: !!i.done }));
+  S.purchases = S.purchases.filter(isObj).map(x => ({ ...x, id: str(x.id, uid()), code: str(x.code), qty: whole(x.qty), store: str(x.store, 'Unknown'),
+    date: str(x.date), packPrice: x.packPrice == null ? null : pos(x.packPrice), saved: Number(x.saved) || 0 }));
+  if (!isObj(S.pantry)) S.pantry = {};
+  for (const [code, ent] of Object.entries(S.pantry)) {
+    const lots = isObj(ent) && Array.isArray(ent.lots) ? ent.lots.filter(isObj).map(l => ({ qty: pos(l.qty, 0), date: str(l.date) })).filter(l => l.qty > 0) : [];
+    if (lots.length) S.pantry[code] = { asOf: str(ent.asOf), lots }; else delete S.pantry[code];
+  }
+  S.pending = S.pending.map(c => str(c));
+  S.stores = (Array.isArray(S.stores) ? S.stores : emptyState().stores).map(s => str(s)).filter(Boolean);
+  S.settings.lowDays = whole(pos(S.settings.lowDays, 7));
+  if (S.trip.store != null) S.trip.store = str(S.trip.store);
+  return S;
+}
 // Accepts v1 or v2/v3 JSON and returns a v3 state.
 export function migrate(raw, { today = todayISO() } = {}) {
   const S = emptyState();
   if (!raw || typeof raw !== 'object') return S;
   if (Array.isArray(raw.prices) || raw.v >= 2) {
     Object.assign(S, raw);
-    S.settings = Object.assign({ lowDays: 7 }, raw.settings || {});
-    S.trip = Object.assign({ active: false, store: null }, raw.trip || {});
+    S.settings = Object.assign({ lowDays: 7 }, isObj(raw.settings) ? raw.settings : {});
+    S.trip = Object.assign({ active: false, store: null }, isObj(raw.trip) ? raw.trip : {});
     for (const k of ['purchases', 'pending', 'list', 'prices']) if (!Array.isArray(S[k])) S[k] = [];
-    if (!S.pantry || typeof S.pantry !== 'object') S.pantry = {};
     S.v = 3;
-    return S;
+    return sanitize(S);
   }
   // v1: prices[code][store] = {price, date(locale string)}
   S.products = raw.products || {};
@@ -99,8 +130,9 @@ export function migrate(raw, { today = todayISO() } = {}) {
     const d = new Date(v.date); const iso = isNaN(d) ? today : d.toISOString().slice(0, 10);
     S.prices.push({ id: uid(), code, store: st === 'Any store' ? 'Unknown' : st, price: v.price, packs: 1, sale: false, date: iso });
   }
-  for (const p of Object.values(S.products)) { p.qtyText = p.qtyText || p.qty; if (!p.size) p.size = parseSize(p.qtyText); delete p.nutr; delete p.qty; }
-  return S;
+  if (!Array.isArray(S.list)) S.list = [];
+  for (const p of Object.values(S.products)) { if (!isObj(p)) continue; p.qtyText = p.qtyText || p.qty; if (!p.size) p.size = parseSize(p.qtyText); delete p.nutr; delete p.qty; }
+  return sanitize(S);
 }
 
 // ---------- prices ----------
@@ -158,7 +190,8 @@ export function groupOptions(S, idx, group, unit) {
 }
 export function cheaperAlt(S, idx, p) {
   if (!p.group || !p.size) return null;
-  const st = stats(idx, p.code); const mine = st ? entryUnit(S, st.best) : Infinity;
+  const st = stats(idx, p.code); const mine = st ? entryUnit(S, st.best) : null;
+  if (!(mine > 0)) return null;   // no price for this item yet, so there's nothing to compare against
   const alt = groupOptions(S, idx, p.group, p.size.unit).find(o => o.p.code !== p.code);
   return alt && alt.u < mine * 0.97 ? { alt, mine } : null;
 }
@@ -338,6 +371,6 @@ export function planList(S, idx) {
   const unpriced = by.__none ? by.__none.items.length : 0;
   const storesUsed = groups.filter(g => g.store).length;
   const bestComplete = oneStop.find(r => !r.miss);
-  const splitSaves = bestComplete && !unpriced && storesUsed > 1 ? { store: bestComplete.store, amt: bestComplete.sum - total } : null;
+  const splitSaves = bestComplete && !unpriced && storesUsed > 1 && bestComplete.sum - total >= 0.005 ? { store: bestComplete.store, amt: bestComplete.sum - total } : null;
   return { groups, total, oneStop, unpriced, storesUsed, splitSaves };
 }
